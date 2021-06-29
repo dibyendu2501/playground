@@ -1,51 +1,26 @@
-FROM openjdk:11-jdk-slim as development
+FROM debian:buster-slim
 
-ENV HOME=/home/java
-WORKDIR /app
-RUN useradd --create-home --home-dir $HOME --uid 1000 --gid 0 java && \
-    chown java:root /app && \
-    chmod g=u /app $HOME
-USER java:root
+ENV BUNDLE_VERSION=20210517 \
+    USER=codeql \
+    HOME=/home/codeql
 
-ENV GRADLE_USER_HOME="/home/java/.gradle" \
-    GRADLE_OPTS="-Dorg.gradle.daemon=false"
-COPY --chown=java:root gradlew ./
-COPY --chown=java:root gradle ./gradle/
-RUN ./gradlew
-
-COPY --chown=java:root ./ ./
-ARG version="local"
-
-USER root:root
 RUN apt-get update && \
-    apt-get -y install curl && \
-    mkdir actions-runner && \
-    cd actions-runner && \
-    curl -o actions-runner-linux-x64-2.278.0.tar.gz -L https://github.com/actions/runner/releases/download/v2.278.0/actions-runner-linux-x64-2.278.0.tar.gz && \
-    tar xzf ./actions-runner-linux-x64-2.278.0.tar.gz
+    apt-get install -y wget && \
+    # Install codeql-runner as root
+    wget --directory-prefix /usr/local/bin https://github.com/github/codeql-action/releases/download/codeql-bundle-$BUNDLE_VERSION/codeql-runner-linux && \
+    chmod a+x /usr/local/bin/codeql-runner-linux && \
+    # Add non-root user
+    useradd --create-home --home-dir $HOME --uid 1000 --gid 0 $USER
 
-USER java:root
-#RUN ./gradlew build testClasses -x test -Pversion=${version}
+USER 1000:0
+WORKDIR $HOME
 
-# ENTRYPOINT ["./gradlew"]
-# CMD ["test", "integTest", "codeCoverage" ,"testReport", "jacocoTestCoverageVerification"]
+# Pre-install codeql-cli in the codeql home directory to save on download time
+# Use `--tools-dir /home/codeql/codeql-runner-tools`
+RUN wget https://github.com/github/codeql-action/releases/download/codeql-bundle-$BUNDLE_VERSION/codeql-bundle-linux64.tar.gz && \
+    mkdir -p codeql-runner-tools/CodeQL/0.0.0-$BUNDLE_VERSION/x64 && \
+    tar -xf codeql-bundle-linux64.tar.gz -C codeql-runner-tools/CodeQL/0.0.0-$BUNDLE_VERSION/x64 && \
+    touch codeql-runner-tools/CodeQL/0.0.0-$BUNDLE_VERSION/x64.complete && \
+    rm codeql-bundle-linux64.tar.gz
 
-###
-
-FROM openjdk:11-jre-slim as production
-
-ENV HOME=/home/java
-WORKDIR /app
-RUN useradd --create-home --home-dir $HOME --uid 1000 --gid 0 java && \
-    chown java:root /app && \
-    chmod g=u /app $HOME
-USER java:root
-
-COPY --from=development --chown=java:root /app/build/libs/*.jar ./
-
-ADD --chown=java:root https://artifactory.appdirect.tools/artifactory/repo/com/datadoghq/dd-java-agent/0.68.0/dd-java-agent-0.68.0.jar /app/lib/dd-java-agent.jar
-ENV JAVA_OPTS="-javaagent:/app/lib/dd-java-agent.jar"
-
-EXPOSE 9090
-EXPOSE 9091
-ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar *.jar"]
+# ENTRYPOINT ["/usr/local/bin/codeql-runner-linux"]
